@@ -1,6 +1,6 @@
 
-  let menu = ["Főoldal","Rólunk","Bejelentkezés"];
-  let link = ["/","about-us","login"];
+  let menu = ["Főoldal","Rólunk","Bejelentkezés","Regisztráció"];
+  let link = ["/","about-us","login", "register"];
   
   const menulist = document.getElementById('menulist');
   

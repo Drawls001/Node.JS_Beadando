@@ -55,6 +55,34 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    if (req.method === 'POST' && req.url === '/register') {
+        let body = "";
+
+        req.on('data', chunk => {
+        body += chunk.toString();
+        });
+
+        req.on('end', () => {
+            const formData = querystring.parse(body);
+
+            console.log("Regisztrációs adatok:");
+            console.log("Felhasználónév:", formData.username);
+            console.log("Email:", formData.email);
+            console.log("Jelszó:", formData.password);
+
+            // később: adatbázis ellenőrzés + INSERT
+
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(`
+                <h1>Regisztráció sikeresen fogadva!</h1>
+                <p>Felhasználónév: ${formData.username}</p>
+                <p><a href="/login">Tovább a bejelentkezéshez</a></p>
+            `);
+        });
+
+    return;
+    }
+
     if (req.method ==='GET') {
         // Főoldal
         if (req.url === "/" || req.url === "/index.html") {
@@ -65,6 +93,12 @@ const server = http.createServer((req, res) => {
         // Belépés
         if (req.url === '/login') {
             serveFile('views/login.html', 'text/html', res);
+            return;
+        }
+
+        // Regisztráció
+        if (req.url == '/register') {
+            serveFile('views/register.html', 'text/html', res);
             return;
         }
 
