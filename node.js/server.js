@@ -90,6 +90,11 @@ const server = http.createServer((req, res) => {
             return;
         }
 
+        if (req.url === '/about-us') {
+            serveFile('views/about-us.html', 'text/html', res);
+            return;
+        }
+
         // Belépés
         if (req.url === '/login') {
             serveFile('views/login.html', 'text/html', res);
