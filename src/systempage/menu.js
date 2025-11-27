@@ -1,6 +1,18 @@
 
-  let menu = ["Főoldal","Rólunk","Bejelentkezés","Regisztráció"];
-  let link = ["/","about-us","login", "register"];
+  function isLoggedIn() {
+    return document.cookie.includes("authToken=loggedin");
+  }
+
+  let menu = [];
+  let link = [];
+
+  if (isLoggedIn()) {
+    menu = ["Főoldal", "Rólunk", "Dashboard", "Kijelentkezés"];
+    link = ["/", "about-us", "dashboard", "logout"];
+  } else {
+    menu = ["Főoldal", "Rólunk", "Bejelentkezés", "Regisztráció"];
+    link = ["/", "about-us", "login", "register"];
+  }
   
   const menulist = document.getElementById('menulist');
   

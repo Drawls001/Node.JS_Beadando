@@ -19,6 +19,11 @@ function serveFile(relPath, contentType, res) {
     });
 }
 
+function isAuthenticated(req) {
+    const cookie = req.headers.cookie || "";
+    return cookie.includes("authToken=loggedin");
+}
+
 const mimeTypes = {
     '.css': 'text/css',
     '.js': 'application/javascript'
@@ -63,18 +68,11 @@ const server = http.createServer((req, res) => {
                 }
 
                 // Sikeres belépés
-                res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-                res.end(`
-                    <!DOCTYPE html>
-                    <html lang="hu">
-                    <head><meta charset="UTF-8"><title>Bejelentkezés</title></head>
-                    <body>
-                        <h1>Sikeres bejelentkezés!</h1>
-                        <p>Üdv, ${row.username}!</p>
-                        <p><a href="/">Vissza a főoldalra</a></p>
-                    </body>
-                    </html>
-                `);
+                res.writeHead(302, {
+                    "Set-Cookie": `authToken=loggedin; Path=/`,
+                    "Location": "/dashboard"
+                 });
+                res.end();
             });
         });
         return;
@@ -148,6 +146,29 @@ const server = http.createServer((req, res) => {
             serveFile('views/register.html', 'text/html', res);
             return;
         }
+
+        // Dashboard oldal
+        if (req.method === 'GET' && req.url === '/dashboard') {
+
+            if (!isAuthenticated(req)) {
+                res.writeHead(302, { "Location": "/login" }); // 🔄 átirányítás védelem miatt
+                res.end();
+                return;
+            }
+
+            serveFile('views/dashboard.html', 'text/html', res);
+            return;
+        }
+        
+        // Kijelentkezés
+        if (req.url === '/logout') {
+            res.writeHead(302, {
+                "Set-Cookie": "authToken=; Max-Age=0; Path=/",
+                "Location": "/"
+            });
+            res.end();
+            return;
+            }
 
         // Public statikus fájlok (pl. CSS)
         if (req.url.startsWith('/public/')) {
