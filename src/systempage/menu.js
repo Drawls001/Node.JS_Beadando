@@ -6,12 +6,22 @@
   let menu = [];
   let link = [];
 
+  function getUserRole() {
+    if (document.cookie.includes("userRole=admin")) return "admin";
+    return "user";
+  }
+
   if (isLoggedIn()) {
-    menu = ["Főoldal", "Rólunk", "Dashboard", "Kijelentkezés"];
-    link = ["/", "about-us", "dashboard", "logout"];
+    if (getUserRole() === "admin") {
+      menu = ["Főoldal", "Rólunk", "Kapcsolat", "Hírek", "Dashboard", "Admin", "Kijelentkezés"];
+      link = ["/", "/about-us", "/contact", "/posts", "/dashboard", "/admin", "/logout"]
+    } else {
+      menu = ["Főoldal", "Rólunk", "Kapcsolat", "Hírek", "Dashboard", "Kijelentkezés"];
+      link = ["/", "/about-us", "/contact", "/posts", "/dashboard", "/logout"];
+    }
   } else {
-    menu = ["Főoldal", "Rólunk", "Bejelentkezés", "Regisztráció"];
-    link = ["/", "about-us", "login", "register"];
+    menu = ["Főoldal", "Rólunk", "Kapcsolat", "Hírek", "Bejelentkezés", "Regisztráció"];
+    link = ["/", "/about-us", "/contact", "/posts", "/login", "/register"];
   }
   
   const menulist = document.getElementById('menulist');
