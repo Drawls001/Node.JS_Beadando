@@ -1045,7 +1045,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("405 - Nem támogatott HTTP metódus");
 });
-
-server.listen(3000, () => {
-    console.log("Szerver fut: http://localhost:3000");
+let port = 4118
+server.listen(port, () => {
+    console.log("Szerver fut: http://localhost:"+port);
 });
