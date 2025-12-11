@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const querystring = require('querystring');
 const db = require('./db');
+const BASE_PATH = '/app127';
 
 function serveFile(relPath, contentType, res) {
     const fullPath = path.join(__dirname, relPath);
@@ -22,7 +23,7 @@ function serveFile(relPath, contentType, res) {
 function requireLogin(req, res) {
     const token = getCookie(req, "authToken");
     if (token !== "loggedin") {
-        res.writeHead(302, { "Location": "/login" });
+        res.writeHead(302, { "Location": `${BASE_PATH}/login` });
         res.end();
         return false;
     }
@@ -33,7 +34,7 @@ function requireAdmin(req, res) {
     if (!requireLogin(req, res)) return false;
     const role = getCookie(req, "userRole");
     if (role !== "admin") {
-        res.writeHead(302, { "Location": "/login" });
+        res.writeHead(302, { "Location": `${BASE_PATH}/login` });
         res.end();
         return false;
     }
@@ -51,23 +52,20 @@ function renderPage(title, innerHtml) {
     return `
         <!DOCTYPE html>
         <html lang="hu">
-        <head id="hd">
+        <head>
             <meta charset="UTF-8">
             <title>${title}</title>
         </head>
         <body>
-            <nav class="navbar navbar-expand-lg bg-body-tertiary">
-                <div class="container-fluid">
-                    <div id="menulist"></div>
-                </div>
-            </nav>
+            
+            <div id="menulist"></div>
 
             <div class="container mt-4">
                 ${innerHtml}
             </div>
 
-            <script src="/src/systempage/menu.js"></script>
-            <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+            <script src="${BASE_PATH}/src/systempage/menu.js"></script>
+            <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
         </body>
         </html>
     `;
@@ -81,8 +79,14 @@ const mimeTypes = {
 const server = http.createServer((req, res) => {
     console.log("Kérés:", req.method, req.url);
 
+    const fullUrl = req.url;
+    const pathOnly = fullUrl.split('?')[0];
+    const url = pathOnly.startsWith(BASE_PATH)
+        ? pathOnly.slice(BASE_PATH.length) || '/' 
+        : pathOnly;
+
     // ===== POST /login – adatbázisos bejelentkezés =====
-    if (req.method === 'POST' && req.url === '/login') {
+    if (req.method === 'POST' && url === '/login') {
         let body = '';
 
         req.on('data', chunk => {
@@ -111,7 +115,7 @@ const server = http.createServer((req, res) => {
                     res.writeHead(401, { "Content-Type": "text/html; charset=utf-8" });
                     res.end(`
                         <h1>Hibás felhasználónév vagy jelszó!</h1>
-                        <p><a href="/login">Vissza a bejelentkezéshez</a></p>
+                        <p><a href="${BASE_PATH}/login">Vissza a bejelentkezéshez</a></p>
                     `);
                     return;
                 }
@@ -126,7 +130,7 @@ const server = http.createServer((req, res) => {
                         `userRole=${role}; Path=/`,
                         `username=${safeUsername}; Path=/`
                     ],
-                    "Location": "/dashboard"
+                    "Location": `${BASE_PATH}/dashboard`
                 });
                 res.end();
             });
@@ -135,7 +139,7 @@ const server = http.createServer((req, res) => {
     }
 
     // ===== POST /register – adatbázisba mentés =====
-    if (req.method === 'POST' && req.url === '/register') {
+    if (req.method === 'POST' && url === '/register') {
         let body = "";
 
         req.on('data', chunk => {
@@ -148,29 +152,68 @@ const server = http.createServer((req, res) => {
             console.log("Regisztrációs adatok:");
             console.log("Felhasználónév:", formData.username);
             console.log("Email:", formData.email);
-            console.log("Jelszó:", formData.password);
+
 
             const sql = `INSERT INTO users (username, email, password) VALUES (?, ?, ?)`;
 
             db.run(sql, [formData.username, formData.email, formData.password], function (err) {
                 if (err) {
                     console.error("DB hiba regisztrációnál:", err);
+                    
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Hiba a regisztráció során!</h4>
+                            <p>Sajnos nem sikerült létrehozni a fiókot.</p>
+                            <hr>
+                            <p class="mb-0 small">Lehetséges ok: A felhasználónév vagy email cím már foglalt.</p>
+                            <p class="small text-muted mt-2">Technikai részletek: ${err.message}</p>
+                            <br>
+                            <a href="${BASE_PATH}/register" class="btn btn-secondary">Újrapróbálom</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end(`
-                        <h1>Hiba történt a regisztráció során.</h1>
-                        <p>${err.message}</p>
-                        <p><a href="/register">Vissza a regisztrációhoz</a></p>
-                    `);
+                    res.end(html);
                     return;
                 }
 
-                // sikeres beszúrás
+                const escapeHtml = (unsafe) => {
+                    return (unsafe || "").toString()
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#039;");
+                }
+                const safeUsername = escapeHtml(formData.username);
+
+                const successContent = `
+                    <div class="row justify-content-center mt-5">
+                        <div class="col-md-8">
+                            <div class="card shadow text-center">
+                                <div class="card-body py-5">
+                                    <h1 class="text-success mb-3">
+                                        <i class="bi bi-check-circle-fill"></i> Sikeres regisztráció!
+                                    </h1>
+                                    <p class="lead">Gratulálunk, a fiókodat sikeresen létrehoztuk az adatbázisban.</p>
+                                    
+                                    <div class="alert alert-light border d-inline-block mt-3 px-4">
+                                        <strong>Létrehozott felhasználónév:</strong> ${safeUsername}
+                                    </div>
+
+                                    <div class="mt-4">
+                                        <p>Most már bejelentkezhetsz a fiókoddal.</p>
+                                        <a href="${BASE_PATH}/login" class="btn btn-primary btn-lg px-5">Tovább a bejelentkezéshez</a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                const html = renderPage("Sikeres regisztráció", successContent);
                 res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-                res.end(`
-                    <h1>Regisztráció sikeresen elmentve az adatbázisba!</h1>
-                    <p>Felhasználónév: ${formData.username}</p>
-                    <p><a href="/login">Tovább a bejelentkezéshez</a></p>
-                `);
+                res.end(html);
             });
         });
 
@@ -178,7 +221,7 @@ const server = http.createServer((req, res) => {
     }
 
     // ===== POST /contact – kapcsolat űrlap mentése =====
-    if (req.method === 'POST' && req.url === '/contact') {
+    if (req.method === 'POST' && url === '/contact') {
         let body = '';
 
         req.on('data', chunk => {
@@ -198,26 +241,40 @@ const server = http.createServer((req, res) => {
             db.run(sql, [formData.name, formData.email, formData.message], function (err) {
                 if (err) {
                     console.error("DB hiba contact-nál:", err);
+                    
+                    // JAVÍTÁS: renderPage használata hiba esetén is, Bootstrap stílussal
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4" role="alert">
+                            <h4 class="alert-heading">Hiba történt!</h4>
+                            <p>Sajnos nem sikerült elmenteni az üzenetet az adatbázisba.</p>
+                            <hr>
+                            <p class="mb-0">Hibaüzenet: ${err.message}</p>
+                        </div>
+                        <div class="mt-3">
+                            <a href="${BASE_PATH}/contact" class="btn btn-secondary">Vissza a kapcsolat oldalra</a>
+                        </div>
+                    `;
+                    
+                    const html = renderPage("Hiba", errorContent);
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end(`
-                        <h1>Hiba történt az üzenet mentése során.</h1>
-                        <p><a href="/contact">Vissza a kapcsolat oldalra</a></p>
-                    `);
+                    res.end(html);
                     return;
                 }
 
+                // JAVÍTÁS: Sikeres mentés esetén is szép, menüvel ellátott oldalt adunk vissza
+                const successContent = `
+                    <div class="card shadow-sm mt-5 text-center">
+                        <div class="card-body py-5">
+                            <h1 class="text-success mb-4">Köszönjük az üzenetet!</h1>
+                            <p class="lead mb-4">Munkatársaink hamarosan felveszik veled a kapcsolatot a megadott e-mail címen.</p>
+                            <a href="${BASE_PATH}/contact" class="btn btn-primary btn-lg">Vissza a főoldalra</a>
+                        </div>
+                    </div>
+                `;
+
+                const html = renderPage("Üzenet elküldve", successContent);
                 res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-                res.end(`
-                    <!DOCTYPE html>
-                    <html lang="hu">
-                    <head><meta charset="UTF-8"><title>Üzenet elküldve</title></head>
-                    <body>
-                        <h1>Köszönjük az üzenetet!</h1>
-                        <p>Hamarosan felvesszük veled a kapcsolatot.</p>
-                        <p><a href="/contact">Vissza a kapcsolat oldalra</a></p>
-                    </body>
-                    </html>
-                `);
+                res.end(html);
             });
         });
 
@@ -225,14 +282,9 @@ const server = http.createServer((req, res) => {
     }
 
     // ===== POST /admin/posts – új bejegyzés mentése =====
-    if (req.method === 'POST' && req.url === '/admin/posts') {
+    if (req.method === 'POST' && url === '/admin/posts') {
 
-        const cookie = req.headers.cookie || "";
-        if (!cookie.includes("authToken=loggedin") || !cookie.includes("userRole=admin")) {
-            res.writeHead(302, { "Location": "/login" });
-            res.end();
-            return;
-        }
+        if (!requireAdmin(req, res)) return;
 
         let body = '';
 
@@ -243,20 +295,50 @@ const server = http.createServer((req, res) => {
         req.on('end', () => {
             const formData = querystring.parse(body);
 
+            // Opcionális extra védelem: Ne engedjünk üres címet vagy tartalmat
+            if (!formData.title || !formData.content) {
+                const errorContent = `
+                    <div class="alert alert-warning mt-4">
+                        <h4 class="alert-heading">Hiányzó adatok!</h4>
+                        <p>A cím és a tartalom kitöltése kötelező.</p>
+                        <a href="${BASE_PATH}/admin/posts" class="btn btn-secondary">Vissza</a>
+                    </div>
+                `;
+                const html = renderPage("Hiba", errorContent);
+                res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+                res.end(html);
+                return;
+            }
+
             const sql = `INSERT INTO posts (title, content, author) VALUES (?, ?, ?)`;
 
             const rawUsername = getCookie(req, "username");
+            // decodeURIComponent fontos, ha ékezetes karakter van a névben
             const author = rawUsername ? decodeURIComponent(rawUsername) : "Ismeretlen";
 
             db.run(sql, [formData.title, formData.content, author], function (err) {
                 if (err) {
                     console.error("DB hiba /admin/posts mentésnél:", err);
+                    
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Adatbázis hiba!</h4>
+                            <p>Nem sikerült elmenteni a bejegyzést.</p>
+                            <hr>
+                            <p class="mb-0 small">${err.message}</p>
+                            <br>
+                            <a href="${BASE_PATH}/admin/posts" class="btn btn-secondary">Vissza</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
+
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Hiba történt a bejegyzés mentésekor.</h1>");
+                    res.end(html);
                     return;
                 }
 
-                res.writeHead(302, { "Location": "/admin/posts" });
+                // Sikeres mentés után visszairányítás a listára
+                res.writeHead(302, { "Location": `${BASE_PATH}/admin/posts` });
                 res.end();
             });
         });
@@ -264,18 +346,21 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // ===== POST /admin/update-posts – Bejegyzés frissítése =====
-    if (req.method === 'POST' && req.url.startsWith('/admin/update-post')) {
+    // ===== POST /admin/update-post – Bejegyzés frissítése =====
+    if (req.method === 'POST' && url.startsWith('/admin/update-post')) {
 
-        const cookie = req.headers.cookie || "";
-        if (!cookie.includes("authToken=loggedin") || !cookie.includes("userRole=admin")) {
-            res.writeHead(302, { "Location": "/login" });
-            res.end();
-            return;
-        }
+        // 1. JAVÍTÁS: Biztonságos admin ellenőrzés a manuális helyett
+        if (!requireAdmin(req, res)) return;
 
         const urlObj = new URL(req.url, 'http://localhost');
         const id = urlObj.searchParams.get('id');
+
+        // Biztonsági ellenőrzés: Ha nincs ID, nem tudunk mit frissíteni
+        if (!id) {
+            res.writeHead(302, { "Location": `${BASE_PATH}/admin/posts` });
+            res.end();
+            return;
+        }
 
         let body = '';
         req.on('data', chunk => body += chunk.toString());
@@ -284,15 +369,31 @@ const server = http.createServer((req, res) => {
 
             const sql = `UPDATE posts SET title = ?, content = ?, author = ? WHERE id = ?`;
 
+            // Az author mezőnél figyelünk, hogy ha üres, akkor inkább NULL vagy üres string legyen
             db.run(sql, [formData.title, formData.content, formData.author || null, id], (err) => {
                 if (err) {
                     console.error("DB hiba update-nél:", err);
+                    
+                    // 2. JAVÍTÁS: Egységes, formázott hibaoldal (renderPage)
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Hiba a módosításkor!</h4>
+                            <p>Nem sikerült frissíteni a bejegyzést az adatbázisban.</p>
+                            <hr>
+                            <p class="mb-0 small">Technikai részletek: ${err.message}</p>
+                            <br>
+                            <a href="${BASE_PATH}/admin/posts" class="btn btn-secondary">Vissza a listához</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
+                    
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Hiba történt a bejegyzés módosításakor.</h1>");
+                    res.end(html);
                     return;
                 }
 
-                res.writeHead(302, { "Location": "/admin/posts" });
+                // Siker esetén visszairányítjuk a listára
+                res.writeHead(302, { "Location": `${BASE_PATH}/admin/posts` });
                 res.end();
             });
         });
@@ -303,31 +404,31 @@ const server = http.createServer((req, res) => {
     // ===== GET kérések =====
     if (req.method === 'GET') {
         // Főoldal
-        if (req.url === "/" || req.url === "/index.html") {
+        if (url === "/" || url === "/index.html") {
             serveFile("views/index.html", "text/html", res);
             return;
         }
 
         // Rólunk
-        if (req.url === '/about-us') {
+        if (url === '/about-us') {
             serveFile('views/about-us.html', 'text/html', res);
             return;
         }
 
         // Belépés oldal
-        if (req.url === '/login') {
+        if (url === '/login') {
             serveFile('views/login.html', 'text/html', res);
             return;
         }
 
         // Regisztráció oldal
-        if (req.url === '/register') {
+        if (url === '/register') {
             serveFile('views/register.html', 'text/html', res);
             return;
         }
 
         // Dashboard oldal
-        if (req.url === '/dashboard') {
+        if (url === '/dashboard') {
 
             if (!requireLogin(req, res)) return;
 
@@ -342,8 +443,22 @@ const server = http.createServer((req, res) => {
             db.get(sql, [], (err, row) => {
                 if (err) {
                     console.error("DB hiba Dashboard-nál:", err.message);
+                    
+                    // JAVÍTÁS: Szép hibaoldal (renderPage) használata
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Hiba a statisztika betöltésekor!</h4>
+                            <p>Sajnos nem sikerült lekérni a rendszer adatait.</p>
+                            <hr>
+                            <p class="mb-0 small">Technikai részletek: ${err.message}</p>
+                            <br>
+                            <a href="${BASE_PATH}/" class="btn btn-secondary">Vissza a főoldalra</a>
+                        </div>
+                    `;
+                    
+                    const html = renderPage("Hiba", errorContent);
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Szerverhiba a statisztika lekérésénél.</h1>");
+                    res.end(html);
                     return;
                 }
 
@@ -410,7 +525,7 @@ const server = http.createServer((req, res) => {
         }
 
         // Admin oldal
-        if (req.url === '/admin') {
+        if (url === '/admin') {
 
             if (!requireAdmin(req, res)) return;
 
@@ -424,7 +539,7 @@ const server = http.createServer((req, res) => {
                             <div class="card-body text-center">
                                 <h5 class="card-title">Felhasználók kezelése</h5>
                                 <p class="card-text">Felhasználók listázása, törlése, admin jog állítása.</p>
-                                <a href="/admin/users" class="btn btn-primary">Megnyitás</a>
+                                <a href="${BASE_PATH}/admin/users" class="btn btn-primary">Megnyitás</a>
                             </div>
                         </div>
                     </div>
@@ -434,7 +549,7 @@ const server = http.createServer((req, res) => {
                             <div class="card-body text-center">
                                 <h5 class="card-title">Kapcsolat üzenetek</h5>
                                 <p class="card-text">Kapcsolat űrlapról érkező üzenetek kezelése.</p>
-                                <a href="/admin/messages" class="btn btn-primary">Megnyitás</a>
+                                <a href="${BASE_PATH}/admin/messages" class="btn btn-primary">Megnyitás</a>
                             </div>
                         </div>
                     </div>
@@ -444,7 +559,7 @@ const server = http.createServer((req, res) => {
                             <div class="card-body text-center">
                                 <h5 class="card-title">Hírek / bejegyzések</h5>
                                 <p class="card-text">Hírek létrehozása, szerkesztése és törlése.</p>
-                                <a href="/admin/posts" class="btn btn-primary">Megnyitás</a>
+                                <a href="${BASE_PATH}/admin/posts" class="btn btn-primary">Megnyitás</a>
                             </div>
                         </div>
                     </div>
@@ -458,7 +573,7 @@ const server = http.createServer((req, res) => {
         }
 
         // Admin – Felhasználók listázása
-        if (req.url === '/admin/users') {
+        if (url === '/admin/users') {
 
             if (!requireAdmin(req, res)) return;
 
@@ -467,65 +582,103 @@ const server = http.createServer((req, res) => {
             db.all(sql, [], (err, rows) => {
                 if (err) {
                     console.error("DB hiba admin/users-nél:", err);
+                    
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Hiba a felhasználók betöltésekor!</h4>
+                            <p>Az adatbázis nem válaszolt megfelelően.</p>
+                            <hr>
+                            <p class="mb-0 small">${err.message}</p>
+                            <br>
+                            <a href="${BASE_PATH}/admin" class="btn btn-secondary">Vissza</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Szerverhiba a felhasználók lekérésekor.</h1>");
+                    res.end(html);
                     return;
+                }
+
+                const escapeHtml = (unsafe) => {
+                    return (unsafe || "").toString()
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#039;");
                 }
 
                 let tableRows = "";
 
-                rows.forEach((row, index) => {
-                    const role = row.role || 'user';
-                    let actions = "";
-
-                    if (role !== 'admin') {
-                        actions += `
-                            <a class="btn btn-sm btn-success me-1"
-                               href="/admin/make-admin?username=${encodeURIComponent(row.username)}"
-                               onclick="return confirm('Biztosan adminná teszed: ${row.username}?');">
-                               Adminná tesz
-                            </a>
-                        `;
-                    } else {
-                        actions += `
-                            <a class="btn btn-sm btn-warning me-1"
-                               href="/admin/remove-admin?username=${encodeURIComponent(row.username)}"
-                               onclick="return confirm('Biztosan elveszed az admin jogot: ${row.username}?');">
-                               Admin jog elvétele
-                            </a>
-                        `;
-                    }
-
-                    actions += `
-                        <a class="btn btn-sm btn-danger"
-                           href="/admin/delete-user?username=${encodeURIComponent(row.username)}"
-                           onclick="return confirm('Biztosan törlöd: ${row.username}?');">
-                           Törlés
-                        </a>
-                    `;
-
-                    tableRows += `
+                if (rows.length === 0) {
+                    tableRows = `
                         <tr>
-                            <td>${index + 1}</td>
-                            <td>${row.username}</td>
-                            <td>${row.email ?? ""}</td>
-                            <td>${role}</td>
-                            <td>${actions}</td>
+                            <td colspan="5" class="text-center text-muted">
+                                Még nincs egyetlen regisztrált felhasználó sem.
+                            </td>
                         </tr>
                     `;
-                });
+                } else {
+                    rows.forEach((row, index) => {
+                        const role = row.role || 'user';
+                        
+                        // JAVÍTÁS: HTML Escaping a megjelenítéshez
+                        const safeUsername = escapeHtml(row.username);
+                        const safeEmail = escapeHtml(row.email);
+                        
+                        // URL-ben továbbra is encodeURIComponent kell!
+                        const urlSafeUsername = encodeURIComponent(row.username);
+
+                        let actions = "";
+
+                        if (role !== 'admin') {
+                            actions += `
+                                <a class="btn btn-sm btn-success me-1"
+                                   href="${BASE_PATH}/admin/make-admin?username=${urlSafeUsername}"
+                                   onclick="return confirm('Biztosan adminná teszed: ${safeUsername}?');">
+                                   Adminná tesz
+                                </a>
+                            `;
+                        } else {
+                            actions += `
+                                <a class="btn btn-sm btn-warning me-1"
+                                   href="${BASE_PATH}/admin/remove-admin?username=${urlSafeUsername}"
+                                   onclick="return confirm('Biztosan elveszed az admin jogot: ${safeUsername}?');">
+                                   Admin jog elvétele
+                                </a>
+                            `;
+                        }
+
+                        actions += `
+                            <a class="btn btn-sm btn-danger"
+                               href="${BASE_PATH}/admin/delete-user?username=${urlSafeUsername}"
+                               onclick="return confirm('Biztosan törlöd: ${safeUsername}?');">
+                               Törlés
+                            </a>
+                        `;
+
+                        tableRows += `
+                            <tr>
+                                <td>${index + 1}</td>
+                                <td>${safeUsername}</td>  <td>${safeEmail}</td>
+                                <td>${role}</td>
+                                <td>${actions}</td>
+                            </tr>
+                        `;
+                    });
+                }
 
                 const content = `
                     <h1 class="mb-3">Felhasználók kezelése</h1>
                     <p class="text-muted">Regisztrált felhasználók listája</p>
 
                     <p>
-                        <a class="btn btn-outline-secondary btn-sm" href="/admin">Vissza</a>
+                        <a class="btn btn-outline-secondary btn-sm" href="${BASE_PATH}/admin">Vissza</a>
                     </p>
 
                     <div class="table-responsive mt-3">
-                        <table class="table table-striped table-hover">
-                            <thead>
+                        <table class="table table-striped table-hover align-middle">
+                            <thead class="table-dark">
                                 <tr>
                                     <th>#</th>
                                     <th>Felhasználónév</th>
@@ -550,7 +703,7 @@ const server = http.createServer((req, res) => {
         }
 
         // Admin – Felhasználó adminná tétele
-        if (req.url.startsWith('/admin/make-admin')) {
+        if (url.startsWith('/admin/make-admin')) {
 
             if (!requireAdmin(req, res)) return;
 
@@ -558,7 +711,7 @@ const server = http.createServer((req, res) => {
             const username = urlObj.searchParams.get('username');
 
             if (!username) {
-                res.writeHead(302, { "Location": "/admin/users" });
+                res.writeHead(302, { "Location": `${BASE_PATH}/admin/users` });
                 res.end();
                 return;
             }
@@ -568,12 +721,25 @@ const server = http.createServer((req, res) => {
             db.run(sql, [username], function (err) {
                 if (err) {
                     console.error("DB hiba adminná tételnél:", err);
+                    
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Hiba a módosításkor!</h4>
+                            <p>Nem sikerült a felhasználót adminisztrátorrá tenni.</p>
+                            <hr>
+                            <p class="mb-0 small">Technikai részletek: ${err.message}</p>
+                            <br>
+                            <a href="${BASE_PATH}/admin/users" class="btn btn-secondary">Vissza a felhasználókhoz</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
+                    
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Hiba történt a felhasználó módosítása közben.</h1>");
+                    res.end(html);
                     return;
                 }
 
-                res.writeHead(302, { "Location": "/admin/users" });
+                res.writeHead(302, { "Location": `${BASE_PATH}/admin/users` });
                 res.end();
             });
 
@@ -581,7 +747,7 @@ const server = http.createServer((req, res) => {
         }
 
         // Admin – Admin jog elvétele
-        if (req.url.startsWith('/admin/remove-admin')) {
+        if (url.startsWith('/admin/remove-admin')) {
 
             if (!requireAdmin(req, res)) return;
 
@@ -589,7 +755,7 @@ const server = http.createServer((req, res) => {
             const username = urlObj.searchParams.get('username');
 
             if (!username) {
-                res.writeHead(302, { "Location": "/admin/users" });
+                res.writeHead(302, { "Location": `${BASE_PATH}/admin/users` });
                 res.end();
                 return;
             }
@@ -599,12 +765,25 @@ const server = http.createServer((req, res) => {
             db.run(sql, [username], function (err) {
                 if (err) {
                     console.error("DB hiba admin jog elvételénél:", err);
+                    
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Hiba a módosításkor!</h4>
+                            <p>Nem sikerült visszavonni az adminisztrátori jogot.</p>
+                            <hr>
+                            <p class="mb-0 small">Technikai részletek: ${err.message}</p>
+                            <br>
+                            <a href="${BASE_PATH}/admin/users" class="btn btn-secondary">Vissza a felhasználókhoz</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
+
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Hiba történt a felhasználó módosítása közben.</h1>");
+                    res.end(html);
                     return;
                 }
 
-                res.writeHead(302, { "Location": "/admin/users" });
+                res.writeHead(302, { "Location": `${BASE_PATH}/admin/users` });
                 res.end();
             });
 
@@ -612,7 +791,7 @@ const server = http.createServer((req, res) => {
         }
 
         // Admin – Felhasználó törlése
-        if (req.url.startsWith('/admin/delete-user')) {
+        if (url.startsWith('/admin/delete-user')) {
 
             if (!requireAdmin(req, res)) return;
 
@@ -620,7 +799,7 @@ const server = http.createServer((req, res) => {
             const username = urlObj.searchParams.get('username');
 
             if (!username) {
-                res.writeHead(302, { "Location": "/admin" });
+                res.writeHead(302, { "Location": `${BASE_PATH}/admin/users` });
                 res.end();
                 return;
             }
@@ -630,23 +809,42 @@ const server = http.createServer((req, res) => {
             db.get(selectSql, [username], (err, row) => {
                 if (err) {
                     console.error("DB hiba szerep lekérdezésnél:", err);
+                    
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Hiba a törlés előkészítésekor!</h4>
+                            <p>Nem sikerült lekérdezni a felhasználó adatait.</p>
+                            <p class="small">${err.message}</p>
+                            <a href="${BASE_PATH}/admin/users" class="btn btn-secondary">Vissza</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Hiba történt a felhasználó törlése közben.</h1>");
+                    res.end(html);
                     return;
                 }
 
                 if (!row) {
-                    res.writeHead(302, { "Location": "/admin" });
+                    // Ha nincs ilyen user, csak visszairányítjuk
+                    res.writeHead(302, { "Location": `${BASE_PATH}/admin/users` });
                     res.end();
                     return;
                 }
 
                 if (row.role === 'admin') {
+                    const warningContent = `
+                        <div class="alert alert-warning mt-5">
+                            <h4 class="alert-heading"><i class="bi bi-exclamation-triangle"></i> Nem engedélyezett művelet!</h4>
+                            <p class="mt-3"><strong>Adminisztrátor jogosultságú felhasználót biztonsági okokból nem lehet közvetlenül törölni.</strong></p>
+                            <p>Ha mindenképp törölni szeretnéd, először vedd el az admin jogosultságát a listában ("Admin jog elvétele"), és utána törölheted.</p>
+                            <hr>
+                            <a href="${BASE_PATH}/admin/users" class="btn btn-warning">Értem, vissza a listához</a>
+                        </div>
+                    `;
+                    
+                    const html = renderPage("Hiba", warningContent);
                     res.writeHead(403, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end(`
-                        <h1>Admin felhasználó nem törölhető!</h1>
-                        <p><a href="/admin">Vissza az admin felületre</a></p>
-                    `);
+                    res.end(html);
                     return;
                 }
 
@@ -655,12 +853,23 @@ const server = http.createServer((req, res) => {
                 db.run(deleteSql, [username], function (err2) {
                     if (err2) {
                         console.error("DB hiba törlésnél:", err2);
+                        
+                        const errorContent = `
+                            <div class="alert alert-danger mt-4">
+                                <h4 class="alert-heading">Sikertelen törlés!</h4>
+                                <p>Hiba történt az adatbázis művelet közben.</p>
+                                <p class="small">${err2.message}</p>
+                                <a href="${BASE_PATH}/admin/users" class="btn btn-secondary">Vissza</a>
+                            </div>
+                        `;
+                        const html = renderPage("Hiba", errorContent);
                         res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                        res.end("<h1>Hiba történt a felhasználó törlése közben.</h1>");
+                        res.end(html);
                         return;
                     }
 
-                    res.writeHead(302, { "Location": "/admin/users" });
+                    // Siker
+                    res.writeHead(302, { "Location": `${BASE_PATH}/admin/users` });
                     res.end();
                 });
             });
@@ -669,7 +878,7 @@ const server = http.createServer((req, res) => {
         }
 
         // Admin – Üzenetek listázása
-        if (req.url === '/admin/messages') {
+        if (url === '/admin/messages') {
 
             if (!requireAdmin(req, res)) return;
 
@@ -678,24 +887,50 @@ const server = http.createServer((req, res) => {
             db.all(sql, [], (err, rows) => {
                 if (err) {
                     console.error("DB hiba admin/messages-nél:", err);
+                    
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Hiba az üzenetek betöltésekor!</h4>
+                            <p>Nem sikerült lekérdezni az adatbázist.</p>
+                            <p class="small">${err.message}</p>
+                            <a href="${BASE_PATH}/admin" class="btn btn-secondary">Vissza</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Szerverhiba az üzenetek lekérésekor.</h1>");
+                    res.end(html);
                     return;
+                }
+
+                const escapeHtml = (unsafe) => {
+                    return (unsafe || "").toString()
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#039;");
                 }
 
                 let tableRows = "";
 
                 rows.forEach((row, index) => {
+                    
+                    const safeName = escapeHtml(row.name);
+                    const safeEmail = escapeHtml(row.email);
+                    const safeMessage = escapeHtml(row.message);
+                    
                     tableRows += `
                         <tr>
                             <td>${index + 1}</td>
-                            <td>${row.name || ""}</td>
-                            <td>${row.email || ""}</td>
-                            <td>${row.message || ""}</td>
-                            <td>${row.created_at || ""}</td>
+                            <td><strong>${safeName}</strong></td>
+                            <td><a href="mailto:${safeEmail}">${safeEmail}</a></td>
+                            
+                            <td style="white-space: pre-wrap; max-width: 400px;">${safeMessage}</td>
+                            
+                            <td class="small text-muted">${row.created_at || ""}</td>
                             <td>
                                 <a class="btn btn-sm btn-danger"
-                                   href="/admin/delete-message?id=${row.id}"
+                                   href="${BASE_PATH}/admin/delete-message?id=${row.id}"
                                    onclick="return confirm('Biztosan törlöd ezt az üzenetet?');">
                                    Törlés
                                 </a>
@@ -709,12 +944,12 @@ const server = http.createServer((req, res) => {
                     <p class="text-muted">Az űrlapról érkező üzenetek listája.</p>
 
                     <p>
-                        <a class="btn btn-outline-secondary btn-sm" href="/admin">Vissza</a>
+                        <a class="btn btn-outline-secondary btn-sm" href="${BASE_PATH}/admin">Vissza</a>
                     </p>
 
                     <div class="table-responsive mt-3">
-                        <table class="table table-striped table-hover">
-                            <thead>
+                        <table class="table table-striped table-hover align-middle">
+                            <thead class="table-dark">
                                 <tr>
                                     <th>#</th>
                                     <th>Név</th>
@@ -727,8 +962,8 @@ const server = http.createServer((req, res) => {
                             <tbody>
                                 ${tableRows || `
                                     <tr>
-                                        <td colspan="6" class="text-center text-muted">
-                                            Még nincs egyetlen üzenet sem.
+                                        <td colspan="6" class="text-center text-muted p-4">
+                                            <em>Még nincs egyetlen üzenet sem.</em>
                                         </td>
                                     </tr>
                                 `}
@@ -746,7 +981,7 @@ const server = http.createServer((req, res) => {
         }
 
         // Admin – Üzenet törlése
-        if (req.url.startsWith('/admin/delete-message')) {
+        if (url.startsWith('/admin/delete-message')) {
 
             if (!requireAdmin(req, res)) return;
 
@@ -754,7 +989,8 @@ const server = http.createServer((req, res) => {
             const id = urlObj.searchParams.get('id');
 
             if (!id) {
-                res.writeHead(302, { "Location": "/admin/messages" });
+                // Ha nincs ID, visszaküldjük a listára
+                res.writeHead(302, { "Location": `${BASE_PATH}/admin/messages` });
                 res.end();
                 return;
             }
@@ -764,12 +1000,26 @@ const server = http.createServer((req, res) => {
             db.run(sql, [id], function (err) {
                 if (err) {
                     console.error("DB hiba üzenet törlésnél:", err);
+                    
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Hiba a törléskor!</h4>
+                            <p>Nem sikerült törölni az üzenetet az adatbázisból.</p>
+                            <hr>
+                            <p class="mb-0 small">Technikai részletek: ${err.message}</p>
+                            <br>
+                            <a href="${BASE_PATH}/admin/messages" class="btn btn-secondary">Vissza az üzenetekhez</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
+
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Hiba történt az üzenet törlése közben.</h1>");
+                    res.end(html);
                     return;
                 }
 
-                res.writeHead(302, { "Location": "/admin/messages" });
+                // Siker esetén visszairányítás a listára
+                res.writeHead(302, { "Location": `${BASE_PATH}/admin/messages` });
                 res.end();
             });
 
@@ -777,7 +1027,7 @@ const server = http.createServer((req, res) => {
         }
 
         // Admin – Bejegyzések listázása + új felvitel
-        if (req.url === '/admin/posts') {
+        if (url === '/admin/posts') {
 
             if (!requireAdmin(req, res)) return;
 
@@ -786,29 +1036,52 @@ const server = http.createServer((req, res) => {
             db.all(sql, [], (err, rows) => {
                 if (err) {
                     console.error("DB hiba admin/posts-nál:", err);
+                    
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Hiba a bejegyzések betöltésekor!</h4>
+                            <p>Nem sikerült lekérdezni az adatbázist.</p>
+                            <p class="small">${err.message}</p>
+                            <a href="${BASE_PATH}/admin" class="btn btn-secondary">Vissza</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Szerverhiba a bejegyzések lekérésekor.</h1>");
+                    res.end(html);
                     return;
+                }
+
+                const escapeHtml = (unsafe) => {
+                    return (unsafe || "").toString()
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#039;");
                 }
 
                 let tableRows = "";
 
                 rows.forEach((row, index) => {
+                    
+                    const safeTitle = escapeHtml(row.title);
+                    const safeAuthor = escapeHtml(row.author);
+
                     tableRows += `
                         <tr>
                             <td>${index + 1}</td>
-                            <td>${row.title}</td>
-                            <td>${row.author || ""}</td>
-                            <td>${row.created_at || ""}</td>
+                            <td class="fw-bold">${safeTitle}</td>
+                            <td>${safeAuthor}</td>
+                            <td class="small text-muted">${row.created_at || ""}</td>
                             <td>
                                 <a class="btn btn-sm btn-warning me-1"
-                                   href="/admin/edit-post?id=${row.id}">
-                                   Szerkesztés
+                                   href="${BASE_PATH}/admin/edit-post?id=${row.id}">
+                                   <i class="bi bi-pencil"></i> Szerkesztés
                                 </a>
                                 <a class="btn btn-sm btn-danger"
-                                   href="/admin/delete-post?id=${row.id}"
+                                   href="${BASE_PATH}/admin/delete-post?id=${row.id}"
                                    onclick="return confirm('Biztosan törlöd ezt a bejegyzést?');">
-                                   Törlés
+                                   <i class="bi bi-trash"></i> Törlés
                                 </a>
                             </td>
                         </tr>
@@ -820,26 +1093,34 @@ const server = http.createServer((req, res) => {
                     <p class="text-muted">Új hírek felvétele, meglévők törlése.</p>
 
                     <p>
-                        <a class="btn btn-outline-secondary btn-sm" href="/admin">Vissza</a>
+                        <a class="btn btn-outline-secondary btn-sm" href="${BASE_PATH}/admin">Vissza az admin menübe</a>
                     </p>
 
-                    <h4 class="mt-3">Új bejegyzés</h4>
-                    <form action="/admin/posts" method="POST" class="mb-4">
-                        <div class="mb-3">
-                            <label class="form-label" for="title">Cím</label>
-                            <input class="form-control" type="text" id="title" name="title" required>
+                    <div class="card shadow-sm mb-5">
+                        <div class="card-header bg-primary text-white">
+                            <h4 class="mb-0 fs-5">Új bejegyzés írása</h4>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label" for="content">Tartalom</label>
-                            <textarea class="form-control" id="content" name="content" rows="4" required></textarea>
+                        <div class="card-body">
+                            <form action="${BASE_PATH}/admin/posts" method="POST">
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold" for="title">Cím</label>
+                                    <input class="form-control" type="text" id="title" name="title" required placeholder="Add meg a bejegyzés címét...">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold" for="content">Tartalom</label>
+                                    <textarea class="form-control" id="content" name="content" rows="4" required placeholder="Ide írd a szöveget..."></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary">
+                                    Bejegyzés mentése
+                                </button>
+                            </form>
                         </div>
-                        <button type="submit" class="btn btn-primary">Bejegyzés mentése</button>
-                    </form>
+                    </div>
 
-                    <h4>Meglévő bejegyzések</h4>
-                    <div class="table-responsive mt-2">
-                        <table class="table table-striped table-hover">
-                            <thead>
+                    <h4 class="mb-3">Meglévő bejegyzések</h4>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover align-middle">
+                            <thead class="table-dark">
                                 <tr>
                                     <th>#</th>
                                     <th>Cím</th>
@@ -851,8 +1132,8 @@ const server = http.createServer((req, res) => {
                             <tbody>
                                 ${tableRows || `
                                     <tr>
-                                        <td colspan="5" class="text-center text-muted">
-                                            Még nincs egyetlen bejegyzés sem.
+                                        <td colspan="5" class="text-center text-muted p-4">
+                                            <em>Még nincs egyetlen bejegyzés sem. Írj egyet fent!</em>
                                         </td>
                                     </tr>
                                 `}
@@ -870,7 +1151,7 @@ const server = http.createServer((req, res) => {
         }
 
         // Admin – Bejegyzés törlése
-        if (req.url.startsWith('/admin/delete-post')) {
+        if (url.startsWith('/admin/delete-post')) {
 
             if (!requireAdmin(req, res)) return;
 
@@ -878,7 +1159,8 @@ const server = http.createServer((req, res) => {
             const id = urlObj.searchParams.get('id');
 
             if (!id) {
-                res.writeHead(302, { "Location": "/admin/posts" });
+                // Ha nincs ID, visszaküldjük a listára
+                res.writeHead(302, { "Location": `${BASE_PATH}/admin/posts` });
                 res.end();
                 return;
             }
@@ -888,12 +1170,26 @@ const server = http.createServer((req, res) => {
             db.run(sql, [id], function (err) {
                 if (err) {
                     console.error("DB hiba bejegyzés törlésnél:", err);
+                    
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Hiba a törléskor!</h4>
+                            <p>Nem sikerült törölni a bejegyzést az adatbázisból.</p>
+                            <hr>
+                            <p class="mb-0 small">Technikai részletek: ${err.message}</p>
+                            <br>
+                            <a href="${BASE_PATH}/admin/posts" class="btn btn-secondary">Vissza a bejegyzésekhez</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
+
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Hiba történt a bejegyzés törlésekor.</h1>");
+                    res.end(html);
                     return;
                 }
 
-                res.writeHead(302, { "Location": "/admin/posts" });
+                // Siker esetén visszairányítás a listára
+                res.writeHead(302, { "Location": `${BASE_PATH}/admin/posts` });
                 res.end();
             });
 
@@ -901,44 +1197,87 @@ const server = http.createServer((req, res) => {
         }
 
         // Admin – Bejegyzés szerkesztő űrlap
-        if (req.url.startsWith('/admin/edit-post')) {
+        if (url.startsWith('/admin/edit-post')) {
 
             if (!requireAdmin(req, res)) return;
 
             const urlObj = new URL(req.url, 'http://localhost');
             const id = urlObj.searchParams.get('id');
 
+            if (!id) {
+                res.writeHead(302, { "Location": `${BASE_PATH}/admin/posts` });
+                res.end();
+                return;
+            }
+
             const sql = `SELECT * FROM posts WHERE id = ?`;
 
             db.get(sql, [id], (err, row) => {
+                // Hiba vagy nem létező bejegyzés kezelése
                 if (err || !row) {
+                    const errorMsg = err ? err.message : "A keresett bejegyzés nem található az adatbázisban.";
+                    const errorContent = `
+                        <div class="alert alert-warning mt-4">
+                            <h4 class="alert-heading">Hiba!</h4>
+                            <p>Nem sikerült betölteni a szerkesztendő bejegyzést.</p>
+                            <hr>
+                            <p class="mb-0 small">${errorMsg}</p>
+                            <br>
+                            <a href="${BASE_PATH}/admin/posts" class="btn btn-secondary">Vissza a listához</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
                     res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Bejegyzés nem található</h1>");
+                    res.end(html);
                     return;
                 }
 
+                const escapeHtmlAttr = (unsafe) => {
+                    return (unsafe || "").toString()
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#039;");
+                }
+
+                const safeTitle = escapeHtmlAttr(row.title);
+                const safeContent = escapeHtmlAttr(row.content);
+                const safeAuthor = escapeHtmlAttr(row.author);
+
                 const content = `
-                    <h1>Bejegyzés szerkesztése</h1>
+                    <h1 class="mb-4">Bejegyzés szerkesztése</h1>
 
-                    <form action="/admin/update-post?id=${row.id}" method="POST" class="mt-3">
-                        <div class="mb-3">
-                            <label class="form-label">Cím</label>
-                            <input class="form-control" type="text" name="title" value="${row.title}" required>
+                    <div class="card shadow-sm">
+                        <div class="card-header bg-warning text-dark">
+                            <h4 class="mb-0 fs-5">Szerkesztés: #${row.id}</h4>
                         </div>
+                        <div class="card-body">
+                            <form action="${BASE_PATH}/admin/update-post?id=${row.id}" method="POST">
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Cím</label>
+                                    <input class="form-control" type="text" name="title" value="${safeTitle}" required>
+                                </div>
 
-                        <div class="mb-3">
-                            <label class="form-label">Tartalom</label>
-                            <textarea class="form-control" name="content" rows="5" required>${row.content}</textarea>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Tartalom</label>
+                                    <textarea class="form-control" name="content" rows="6" required>${safeContent}</textarea>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Szerző</label>
+                                    <input class="form-control" type="text" name="author" value="${safeAuthor}">
+                                </div>
+
+                                <div class="d-flex justify-content-between align-items-center mt-4">
+                                    <a href="${BASE_PATH}/admin/posts" class="btn btn-secondary">Mégse</a>
+                                    <button type="submit" class="btn btn-primary px-4">
+                                        <i class="bi bi-save"></i> Változtatások mentése
+                                    </button>
+                                </div>
+                            </form>
                         </div>
-
-                        <div class="mb-3">
-                            <label class="form-label">Szerző</label>
-                            <input class="form-control" type="text" name="author" value="${row.author || ""}">
-                        </div>
-
-                        <button type="submit" class="btn btn-primary">Mentés</button>
-                        <a href="/admin/posts" class="btn btn-secondary">Mégse</a>
-                    </form>
+                    </div>
                 `;
 
                 const html = renderPage("Bejegyzés szerkesztése", content);
@@ -950,37 +1289,61 @@ const server = http.createServer((req, res) => {
         }
 
         // Kapcsolat oldal
-        if (req.url === '/contact') {
+        if (url === '/contact') {
             serveFile('views/contact.html', 'text/html', res);
             return;
         }
 
         // Publikus bejegyzéslista
-        if (req.url === '/posts') {
+        if (url === '/posts') {
 
             const sql = `SELECT title, content, author, created_at FROM posts ORDER BY created_at DESC`;
 
             db.all(sql, [], (err, rows) => {
                 if (err) {
                     console.error("DB hiba /posts-nál:", err);
+                    
+                    const errorContent = `
+                        <div class="alert alert-danger mt-4">
+                            <h4 class="alert-heading">Hiba a hírek betöltésekor!</h4>
+                            <p>Nem sikerült lekérdezni az adatbázist.</p>
+                            <p class="small">${err.message}</p>
+                            <a href="${BASE_PATH}/" class="btn btn-secondary">Vissza a főoldalra</a>
+                        </div>
+                    `;
+                    const html = renderPage("Hiba", errorContent);
                     res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-                    res.end("<h1>Szerverhiba a bejegyzések lekérésekor.</h1>");
+                    res.end(html);
                     return;
+                }
+
+                const escapeHtml = (unsafe) => {
+                    return (unsafe || "").toString()
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#039;");
                 }
 
                 let cards = "";
 
                 rows.forEach(post => {
+                    const safeTitle = escapeHtml(post.title);
+                    const safeContent = escapeHtml(post.content);
+                    const safeAuthor = escapeHtml(post.author);
+
                     cards += `
-                        <div class="col-md-6 mb-3">
+                        <div class="col-md-6 mb-4">
                             <div class="card shadow-sm h-100">
-                                <div class="card-body d-flex flex-column justify-content-between">
-                                    <h5 class="card-title">${post.title}</h5>
-                                    <p class="card-text">${post.content}</p>
-                                    <p class="text-muted small mb-0">
-                                        Szerző: ${post.author || 'Ismeretlen'}<br>
-                                        Dátum: ${post.created_at || ''}
-                                    </p>
+                                <div class="card-body">
+                                    <h5 class="card-title fw-bold">${safeTitle}</h5>
+                                    <h6 class="card-subtitle mb-3 text-muted small">
+                                        <i class="bi bi-person"></i> ${safeAuthor || 'Ismeretlen'} &nbsp;|&nbsp; 
+                                        <i class="bi bi-calendar"></i> ${post.created_at || ''}
+                                    </h6>
+                                    <hr>
+                                    <p class="card-text" style="white-space: pre-wrap;">${safeContent}</p>
                                 </div>
                             </div>
                         </div>
@@ -988,9 +1351,21 @@ const server = http.createServer((req, res) => {
                 });
 
                 const content = `
-                    <h1 class="mb-4">Hírek / Bejegyzések</h1>
+                    <h1 class="mb-3">Hírek / Bejegyzések</h1>
+                    <p class="text-muted">A Soleris Group legfrissebb hírei és közleményei.</p>
+                    
+                    <p class="mb-4">
+                        <a class="btn btn-outline-secondary btn-sm" href="${BASE_PATH}/">Vissza a főoldalra</a>
+                    </p>
+
                     <div class="row">
-                        ${cards || '<p class="text-muted">Még nincs egyetlen bejegyzés sem.</p>'}
+                        ${cards || `
+                            <div class="col-12">
+                                <div class="alert alert-info">
+                                    Jelenleg nincs megjeleníthető bejegyzés.
+                                </div>
+                            </div>
+                        `}
                     </div>
                 `;
 
@@ -1003,17 +1378,21 @@ const server = http.createServer((req, res) => {
         }
 
         // Kijelentkezés
-        if (req.url === '/logout') {
+        if (url === '/logout') {
             res.writeHead(302, {
-                "Set-Cookie": "authToken=; Max-Age=0; Path=/",
-                "Location": "/"
+                "Set-Cookie": [ 
+                    "authToken=; Max-Age=0; Path=/",
+                    "userRole=; Max-Age=0; Path=/",
+                    "username=; Max-Age=0; Path=/"
+                    ],
+                "Location": BASE_PATH + "/"
             });
             res.end();
             return;
         }
 
         // Public statikus fájlok (pl. CSS)
-        if (req.url.startsWith('/public/')) {
+        if (url.startsWith('/public/')) {
             const relPath = req.url.slice(1); // "public/style.css"
             const ext = path.extname(relPath);
             const ct = mimeTypes[ext] || 'application/octet-stream';
@@ -1022,14 +1401,14 @@ const server = http.createServer((req, res) => {
         }
 
         // JS fájlok (pl. /src/systempage/menu.js)
-        if (req.url.endsWith(".js")) {
+        if (url.endsWith(".js")) {
             // fontos: . + req.url → ./src/systempage/menu.js
-            serveFile("." + req.url, "application/javascript", res);
+            serveFile("." + url, "application/javascript", res);
             return;
         }
 
         // favicon – csak elnyeljük, hogy ne legyen hiba
-        if (req.url === "/favicon.ico") {
+        if (url === "/favicon.ico") {
             res.writeHead(204);
             res.end();
             return;
@@ -1037,7 +1416,7 @@ const server = http.createServer((req, res) => {
 
         // minden másra: 404
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-        res.end("404 - Nincs ilyen erőforrás: " + req.url);
+        res.end("404 - Nincs ilyen erőforrás: " + url);
         return;
     }
 
@@ -1045,7 +1424,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("405 - Nem támogatott HTTP metódus");
 });
-let port = 4118
-server.listen(port, () => {
-    console.log("Szerver fut: http://localhost:"+port);
+let port = 4127
+server.listen(port, '0.0.0.0', () => {
+    console.log(`Szerver fut: http://143.47.98.96:${port}`);
 });
